@@ -13,7 +13,7 @@ case class Drone(id: Int, var position: (Int, Int), var products: Map[Int, Int])
   def totalWeightOfProducts: Int = Simulation.instance.weightOfProducts(products)
   def currentCapacity: Int = Simulation.instance.droneCapacity - totalWeightOfProducts
 
-  def getProductsThatCanFit(newProducts: Map[Int, Int]): Map[Int, Int] = {
+  def getProductsThatCanFitOutOf(newProducts: Map[Int, Int]): Map[Int, Int] = {
     val canCarry = Map[Int, Int]()
     var ps = newProducts.toArray
     ps = ps.sortWith((a: (Int, Int), b: (Int, Int)) => {

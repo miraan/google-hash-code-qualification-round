@@ -3,7 +3,6 @@ import scala.collection.mutable.Map
 case class Order(id: Int, position: (Int, Int), products: Map[Int, Int]) {
 
   def isComplete: Boolean = totalWeight() == 0
-
   def totalWeight(): Int = Simulation.instance.weightOfProducts(products)
 
   def removeProducts(ps: Map[Int, Int]): Unit = {

@@ -1,4 +1,3 @@
-import scala.collection.mutable
 import scala.collection.mutable.Map
 import scala.collection.mutable.Set
 
@@ -28,7 +27,7 @@ class Simulation {
   var commands: List[Command] = List()
 
   def run(): Unit = {
-    printDescription()
+    printDescriptionOfSimulationParameters()
     currentTime = 0
     while (currentTime < maxTime && !allOrdersComplete) doTurn()
 
@@ -49,6 +48,13 @@ class Simulation {
     currentTime += 1
     if (currentTime % 1000 == 0) println("current time: " + currentTime)
   }
+
+  // products are represented as a Map[Int, Int] from product types to their respective quantities
+  // we define a shipment as a subset of products that occur in one order, from one warehouse
+  // and can fit on a given drone
+  // sendDrone, below, will first find the optimal initial shipment to load onto the drone
+  // then, will keep loading shipment, in optimal order, from the same warehouse as the initial one, onto the drone
+  // while more can still fit
 
   def sendDrone(drone: Drone): Unit = {
     var os: List[(Order, Warehouse, Map[Int, Int])] = getInitialShipmentsListForDrone(drone)
@@ -90,7 +96,6 @@ class Simulation {
       for ((productType, quantity) <- shipment) productTypesInShipment + productType
       totalDeliverTime += productTypesInShipment.size
 
-      // track score
       val timeOfDelivery = currentTime + totalLoadTime + totalDeliverTime - 1
       if (order.isComplete && timeOfDelivery < maxTime) {
         completedOrders += 1
@@ -138,7 +143,7 @@ class Simulation {
       getScoreForInitialShipment(drone, ows1._1, ows1._2, ows1._3) > getScoreForInitialShipment(drone, ows2._1, ows2._2, ows2._3)
     })
   }
-  
+
   def getSubsequentShipmentsListForDrone(drone: Drone, warehouse: Warehouse, previousOrder: Order): List[(Order, Warehouse, Map[Int, Int])] = {
     orders.filter(!_.isComplete)
     .map((o: Order) => {
@@ -155,7 +160,7 @@ class Simulation {
       (os._1, warehouse, os._2)
     })
   }
-  
+
   def getScoreForInitialShipment(drone: Drone, order: Order, warehouse: Warehouse, shipment: Map[Int, Int]): Double = {
     val p = order.percentageOfOrder(shipment)
     val d1 = drone.distanceFrom(warehouse.position)
@@ -195,8 +200,8 @@ class Simulation {
   }
 
   def getShipment(drone: Drone, order: Order, warehouse: Warehouse): Map[Int, Int] = {
-    var shipment = warehouse.getProductsThatAreInStock(order.products)
-    shipment = drone.getProductsThatCanFit(shipment)
+    var shipment = warehouse.getProductsThatAreInStockOutOf(order.products)
+    shipment = drone.getProductsThatCanFitOutOf(shipment)
     shipment
   }
 
@@ -212,7 +217,7 @@ class Simulation {
   def numberOfProductTypes(shipment: Map[Int, Int]) =
     shipment.foldLeft(0)((count: Int, product: (Int, Int)) => { count + (if (product._2 > 0) 1 else 0) } )
 
-  def getProductTypes(shipment: Map[Int, Int]) = {
+  def getProductTypes(shipment: Map[Int, Int]): Set[Int] = {
     val productTypes = Set[Int]()
     for ((productType, quantity) <- shipment) productTypes + productType
     productTypes
@@ -224,7 +229,7 @@ class Simulation {
     (((maxTime - time).toDouble / maxTime) * 100).ceil.toInt
   }
 
-  def printDescription(): Unit = {
+  def printDescriptionOfSimulationParameters(): Unit = {
     println("Simulation Parameters: ")
     println("Rows: " + rows)
     println("Cols: " + cols)
