@@ -53,7 +53,7 @@ class Simulation {
   // we define a shipment as a subset of products that occur in one order, from one warehouse
   // and can fit on a given drone
   // sendDrone, below, will first find the optimal initial shipment to load onto the drone
-  // then, will keep loading shipment, in optimal order, from the same warehouse as the initial one, onto the drone
+  // then, will keep loading shipments, in optimal order, from the same warehouse as the initial one, onto the drone
   // while more can still fit
 
   def sendDrone(drone: Drone): Unit = {
@@ -92,9 +92,7 @@ class Simulation {
       } else {
         totalDeliverTime += previousOrder.distanceFrom(order.position)
       }
-      val productTypesInShipment = Set[Int]()
-      for ((productType, quantity) <- shipment) productTypesInShipment + productType
-      totalDeliverTime += productTypesInShipment.size
+      totalDeliverTime += numberOfProductTypes(shipment)
 
       val timeOfDelivery = currentTime + totalLoadTime + totalDeliverTime - 1
       if (order.isComplete && timeOfDelivery < maxTime) {
