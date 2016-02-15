@@ -4,7 +4,7 @@ import scala.io.Source
 import scala.collection.mutable.Map
 
 object FileInput {
-  val dataset = "redundancy"
+  val dataset = "busy_day"
 
   def getFileLines(): Array[String] = {
     val filename = "/Users/tripr/Documents/Oxford/Google Hash Code Online Qualification Round/src/"+dataset+".in"

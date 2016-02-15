@@ -1,8 +1,15 @@
 import scala.collection.mutable.Map
+import scala.collection.immutable.{Map => IMap}
 
 case class Drone(id: Int, var position: (Int, Int), var products: Map[Int, Int]) {
   var isBusy = false
   var stopsBeingBusyAt = 0
+
+  override def equals(o: Any) = o match {
+    case that: Drone => that.id == id
+    case _ => false
+  }
+  override def hashCode = id
 
   def updateState(): Unit = {
     if (isBusy && stopsBeingBusyAt == Simulation.instance.currentTime) {
@@ -16,8 +23,9 @@ case class Drone(id: Int, var position: (Int, Int), var products: Map[Int, Int])
   def getProductsThatCanFitOutOf(newProducts: Map[Int, Int]): Map[Int, Int] = {
     val canCarry = Map[Int, Int]()
     var ps = newProducts.toArray
+    // we load drone in descending order of product weights
     ps = ps.sortWith((a: (Int, Int), b: (Int, Int)) => {
-      Simulation.instance.productTypeWeights(a._1) < Simulation.instance.productTypeWeights(b._1)
+      Simulation.instance.productTypeWeights(a._1) > Simulation.instance.productTypeWeights(b._1)
     })
     
     var capacity = currentCapacity
@@ -30,14 +38,16 @@ case class Drone(id: Int, var position: (Int, Int), var products: Map[Int, Int])
         }
       }
     }
-    
     canCarry
   }
-  
-  def addProducts(newProducts: Map[Int, Int]): Unit = {
+
+  def addProducts(newProducts: IMap[Int, Int]): Unit = {
     for ((productType, quantity) <- newProducts) {
       products(productType) = products.getOrElse(productType, 0) + quantity
     }
+  }
+  def addProducts(newProducts: Map[Int, Int]): Unit = {
+    addProducts(newProducts.toMap)
   }
 
   def removeProducts(ps: Map[Int, Int]): Unit = {

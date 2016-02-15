@@ -1,5 +1,7 @@
+import scala.collection.mutable
 import scala.collection.mutable.Map
 import scala.collection.mutable.Set
+import scala.collection.immutable.{Map => IMap, Set => ISet}
 
 object Simulation {
   var instance: Simulation = _
@@ -49,158 +51,185 @@ class Simulation {
     if (currentTime % 1000 == 0) println("current time: " + currentTime)
   }
 
-  // products are represented as a Map[Int, Int] from product types to their respective quantities
-  // we define a shipment as a subset of products that occur in one order, from one warehouse
-  // and can fit on a given drone
-  // sendDrone, below, will first find the optimal initial shipment to load onto the drone
-  // then, will keep loading shipments, in optimal order, from the same warehouse as the initial one, onto the drone
-  // while more can still fit
-
   def sendDrone(drone: Drone): Unit = {
-    var os: List[(Order, Warehouse, Map[Int, Int])] = getInitialShipmentsListForDrone(drone)
-    if (os.isEmpty) {
-      println("all orders complete")
-      return
-    }
-    val warehouse: Warehouse = os.head._2
-    var orderShipments: List[(Order, Map[Int, Int])] = List()
-
-    while (!os.isEmpty) {
-      val order = os.head._1
-      val shipment = os.head._3
-
-      warehouse.removeProducts(shipment)
-      drone.addProducts(shipment)
-      order.removeProducts(shipment)
-
-      orderShipments ::= (order, shipment)
-
-      os = getSubsequentShipmentsListForDrone(drone, warehouse, order)
-    }
-
-    val allProductTypes = Set[Int]()
-    for ((order, shipment) <- orderShipments) {
-      for ((productType, quantity) <- shipment) allProductTypes + productType
-    }
-    val totalLoadTime = drone.distanceFrom(warehouse.position) + allProductTypes.size
-
-    var totalDeliverTime = 0
-    var previousOrder: Order = null
-    for ((order, shipment) <- orderShipments.reverse) {
-      if (previousOrder == null) {
-        totalDeliverTime += warehouse.distanceFrom(order.position)
-      } else {
-        totalDeliverTime += previousOrder.distanceFrom(order.position)
-      }
-      totalDeliverTime += numberOfProductTypes(shipment)
-
-      val timeOfDelivery = currentTime + totalLoadTime + totalDeliverTime - 1
-      if (order.isComplete && timeOfDelivery < maxTime) {
-        completedOrders += 1
-        totalScore += scoreForOrderCompletedAt(timeOfDelivery)
-        println("total score: " + totalScore)
-      }
-
-      previousOrder = order
-    }
-
-    for ((order, shipment) <- orderShipments.reverse) {
-      for ((productType, quantity) <- shipment) {
-        val load = Load(drone, warehouse, productType, quantity)
-        commands ::= load
-      }
-    }
-    for ((order, shipment) <- orderShipments.reverse) {
-      for ((productType, quantity) <- shipment) {
-        val deliver = Deliver(drone, order, productType, quantity)
-        commands ::= deliver
-      }
-    }
-
-    drone.isBusy = true
-    drone.stopsBeingBusyAt = currentTime + totalLoadTime + totalDeliverTime
-    drone.position = previousOrder.position
     drone.removeAllProducts()
+    getOptimalShipmentList(drone) match {
+      case None => {
+        println("all orders complete")
+        return
+      }
+      case Some(shipmentList) => {
+        val analysis = analyseShipmentList(shipmentList)
 
-    println("drone shipped for " + orderShipments.length + " orders")
+        var loadCommands = List[Command]()
+        var deliverCommands = List[Command]()
+
+        for (shipment <- shipmentList) {
+          val (lCommands, dCommands) = shipment.load()
+          loadCommands :::= lCommands
+          deliverCommands :::= dCommands
+        }
+        for (c <- loadCommands.reverse) commands ::= c
+        for (c <- deliverCommands.reverse) commands ::= c
+
+        drone.isBusy = true
+        drone.stopsBeingBusyAt = currentTime + analysis._3
+        drone.position = shipmentList.last.order.position
+        drone.removeAllProducts()
+
+        println("drone sent with " + shipmentList.length + " shipments, scaled score: " + analysis._1.ceil.toInt + ", actual score: " + analysis._2.ceil.toInt + ", total time: " + analysis._3)
+        if (analysis._2 > 0) {
+          completedOrders += analysis._4
+          totalScore += analysis._2.ceil.toInt
+          println("total score: " + totalScore)
+          println("completed orders: " + completedOrders + "/" + orders.length)
+        }
+      }
+    }
   }
 
-  def getInitialShipmentsListForDrone(drone: Drone): List[(Order, Warehouse, Map[Int, Int])] = {
+  def getOptimalShipmentList(drone: Drone): Option[List[Shipment]] = {
+    val branchingFactor = 3
+
+    val initialList = getInitialShipmentsListForDrone(drone)
+    if (initialList.isEmpty) return None
+
+    var possibilities: List[List[Shipment]] = initialList.take(branchingFactor).map(List(_))
+    var roots: List[List[Shipment]] = List()
+    var loop = true
+    while (loop) {
+      loop = false
+      possibilities = possibilities.flatMap((shipmentList) => {
+        val nextList = getNextShipmentsList(shipmentList).take(branchingFactor)
+        if (!nextList.isEmpty) {
+          loop = true
+          roots ::= shipmentList
+          nextList.map(_ :: shipmentList)
+        } else {
+          List(shipmentList)
+        }
+      })
+    }
+    possibilities :::= roots
+
+    val optimalShipmentList =
+      possibilities
+      .map(shipmentList => (shipmentList, analyseShipmentList(shipmentList.reverse)))
+      .sortWith((a, b) => a._2._1 > b._2._1)
+      .head._1
+    println("considered " + possibilities.length + " possible shipment lists")
+    Some(optimalShipmentList.reverse)
+  }
+
+  def getInitialShipmentsListForDrone(drone: Drone): List[Shipment] = {
+    drone.removeAllProducts()
     orders.filter(!_.isComplete)
-    .flatMap((o: Order) => {
+      .flatMap((o: Order) => {
       for (w <- warehouses) yield (o, w)
     })
-    .map((ow: (Order, Warehouse)) => {
-      val s = getShipment(drone, ow._1, ow._2)
-      (ow._1, ow._2, s)
+      .map((ow: (Order, Warehouse)) => {
+      Shipment(drone, ow._1, ow._2)
     })
-    .filter((ows: (Order, Warehouse, Map[Int, Int])) => {
-      weightOfProducts(ows._3) > 0
+      .filter(_.hasProducts)
+      .map((shipment) => {
+      (shipment, shipment.analyseAsInitialShipment())
     })
-    .sortWith((ows1: (Order, Warehouse, Map[Int, Int]), ows2: (Order, Warehouse, Map[Int, Int])) => {
-      getScoreForInitialShipment(drone, ows1._1, ows1._2, ows1._3) > getScoreForInitialShipment(drone, ows2._1, ows2._2, ows2._3)
+      .filter(_._2._3 + currentTime - 1 < maxTime)
+      .sortWith((a, b) => {
+      a._2._1 > b._2._1
     })
+      .map(_._1)
   }
 
-  def getSubsequentShipmentsListForDrone(drone: Drone, warehouse: Warehouse, previousOrder: Order): List[(Order, Warehouse, Map[Int, Int])] = {
-    orders.filter(!_.isComplete)
-    .map((o: Order) => {
-      val s = getShipment(drone, o, warehouse)
-      (o, s)
+  def getNextShipmentsList(currentShipmentList: List[Shipment]): List[Shipment] = {
+    val drone = currentShipmentList.head.drone
+    drone.removeAllProducts()
+    val warehouse = currentShipmentList.head.warehouse
+    for (shipment <- currentShipmentList) {
+      drone.addProducts(shipment.products)
+      warehouse.removeProducts(shipment.products)
+      shipment.order.removeProducts(shipment.products)
+    }
+
+    val nextShipmentsList = orders.filter(!_.isComplete)
+      .map((order) => {
+      Shipment(drone, order, warehouse)
     })
-    .filter((os: (Order, Map[Int, Int])) => {
-      weightOfProducts(os._2) > 0
-    })
-    .sortWith((os1: (Order, Map[Int, Int]), os2: (Order, Map[Int, Int])) => {
-      getScoreForSubsequentShipment(drone, os1._1, os1._2, previousOrder) > getScoreForSubsequentShipment(drone, os2._1, os2._2, previousOrder)
-    })
-    .map((os: (Order, Map[Int, Int])) => {
-      (os._1, warehouse, os._2)
-    })
+      .filter(_.hasProducts)
+      .map((shipment) => (shipment, getScoreForLastShipment(shipment::currentShipmentList)))
+      .sortWith((a, b) => a._2 > b._2)
+      .map(_._1)
+
+    drone.removeAllProducts()
+    for (shipment <- currentShipmentList) {
+      warehouse.addProducts(shipment.products)
+      shipment.order.addProducts(shipment.products)
+    }
+
+    nextShipmentsList
   }
 
-  def getScoreForInitialShipment(drone: Drone, order: Order, warehouse: Warehouse, shipment: Map[Int, Int]): Double = {
-    val p = order.percentageOfOrder(shipment)
-    val d1 = drone.distanceFrom(warehouse.position)
-    val d2 = warehouse.distanceFrom(order.position)
-    val turns = d1 + d2 + (numberOfProductTypes(shipment) * 2)
-    p / turns
-  }
-  
-  def getScoreForSubsequentShipment(drone: Drone, order: Order, shipment: Map[Int, Int], previousOrder: Order): Double = {
-    val d = previousOrder.distanceFrom(order.position)
+  def getScoreForLastShipment(shipmentList: List[Shipment]): Double = {
+    val shipment = shipmentList.head
+    val previousShipment = shipmentList.tail.head
 
-    val m = numberOfProductTypes(shipment)
+    val d = previousShipment.order.distanceFrom(shipment.order.position)
 
-    val currentProductTypes = getProductTypes(drone.products)
+    val m = shipment.numberOfProductTypes
+
+    val currentProductTypes = getProductTypes(shipmentList.tail)
     val newProductTypes = Set[Int]()
-    for ((productType, quantity) <- shipment) if (!currentProductTypes.contains(productType)) newProductTypes + productType
+    for ((productType, quantity) <- shipment.products) if (!currentProductTypes.contains(productType)) newProductTypes + productType
     val n = newProductTypes.size
 
-    val p = order.percentageOfOrder(shipment)
+    val p = shipment.percentageOfOrder
     val turns = d + m + n
     p / turns
   }
 
-  var calculatedAverageDistance: Double = 0
-  def averageDistance = {
-    if (calculatedAverageDistance == 0) {
-      val distances = orders.flatMap((o: Order) => {
-        for (w <- warehouses) yield (o, w)
-      })
-        .map((ow: (Order, Warehouse)) => {
-        getDistance(ow._1.position, ow._2.position)
-      })
-      val sum = distances.foldLeft(0)((total: Int, x: Int) => total + x)
-      calculatedAverageDistance = sum.toDouble / distances.length
-    }
-    calculatedAverageDistance
-  }
+  // returns (scaled score, actual score, total time, number of completed orders)
+  def analyseShipmentList(shipmentList: List[Shipment]): (Double, Double, Int, Int) = {
+    val drone = shipmentList.head.drone
+    val w = shipmentList.head.warehouse // assume warehouse is fixed for shipment list
+    val d1 = drone.distanceFrom(w.position)
+    val totalLoadTime = d1 + numberOfProductTypes(shipmentList)
+    var totalTime = totalLoadTime
+    var completedOrders = 0
 
-  def getShipment(drone: Drone, order: Order, warehouse: Warehouse): Map[Int, Int] = {
-    var shipment = warehouse.getProductsThatAreInStockOutOf(order.products)
-    shipment = drone.getProductsThatCanFitOutOf(shipment)
-    shipment
+    val firstShipment = shipmentList.head
+
+    val deliverTime = w.distanceFrom(firstShipment.order.position) + firstShipment.numberOfProductTypes
+    totalTime += deliverTime
+
+    val p = firstShipment.percentageOfOrder
+    val scaledScore = p * scoreForOrderCompletedAt(currentTime + totalTime - 1)
+    var totalScaledScore = scaledScore
+    val actualScore = if (p == 1) {
+      completedOrders += 1
+      scaledScore
+    } else 0
+    var totalActualScore = actualScore
+
+    var previousShipment = firstShipment
+    for (shipment <- shipmentList.tail) {
+      val deliverTime = previousShipment.order.distanceFrom(shipment.order.position) + shipment.numberOfProductTypes
+      totalTime += deliverTime
+
+      val p = shipment.percentageOfOrder
+      val scaledScore = p * scoreForOrderCompletedAt(currentTime + totalTime - 1)
+      totalScaledScore += scaledScore
+      val actualScore = if (p == 1) {
+        completedOrders += 1
+        scaledScore
+      } else 0
+      totalActualScore += actualScore
+
+      previousShipment = shipment
+    }
+
+    totalScaledScore /= totalTime
+
+    (totalScaledScore, totalActualScore, totalTime, completedOrders)
   }
 
   def getDistance(a: (Int, Int), b: (Int, Int)): Int = {
@@ -209,15 +238,36 @@ class Simulation {
     Math.sqrt(dx2 + dy2).ceil.toInt
   }
 
-  def weightOfProducts(shipment: Map[Int, Int]) =
-    shipment.foldLeft(0)((sum: Int, product: (Int, Int)) => { sum + (productTypeWeights(product._1) * product._2) })
-  
-  def numberOfProductTypes(shipment: Map[Int, Int]) =
-    shipment.foldLeft(0)((count: Int, product: (Int, Int)) => { count + (if (product._2 > 0) 1 else 0) } )
+  def weightOfProducts(ps: Map[Int, Int]) =
+    ps.foldLeft(0)((sum: Int, product: (Int, Int)) => { sum + (productTypeWeights(product._1) * product._2) })
+  def weightOfProducts(ps: collection.immutable.Map[Int, Int]) =
+    ps.foldLeft(0)((sum: Int, product: (Int, Int)) => { sum + (productTypeWeights(product._1) * product._2) })
 
-  def getProductTypes(shipment: Map[Int, Int]): Set[Int] = {
+  def weightOfShipmentList(shipmentList: List[(Order, Warehouse, Map[Int, Int])]) =
+    shipmentList.foldLeft(0)((sum: Int, shipment: (Order, Warehouse, Map[Int, Int])) => sum + weightOfProducts(shipment._3))
+
+  def numberOfProductTypes(shipmentList: List[Shipment]) = {
     val productTypes = Set[Int]()
-    for ((productType, quantity) <- shipment) productTypes + productType
+    for (shipment <- shipmentList) {
+      for ((productType, quantity) <- shipment.products) productTypes + productType
+    }
+    productTypes.size
+  }
+  
+  def numberOfProductTypes(ps: Map[Int, Int]) =
+    ps.foldLeft(0)((count: Int, product: (Int, Int)) => { count + (if (product._2 > 0) 1 else 0) } )
+
+  def getProductTypes(ps: Map[Int, Int]): Set[Int] = {
+    val productTypes = Set[Int]()
+    for ((productType, quantity) <- ps) productTypes + productType
+    productTypes
+  }
+
+  def getProductTypes(shipmentList: List[Shipment]): Set[Int] = {
+    val productTypes = Set[Int]()
+    for (shipment <- shipmentList) {
+      for ((productType, quantity) <- shipment.products) productTypes + productType
+    }
     productTypes
   }
 
