@@ -1,13 +1,22 @@
-import scala.collection.mutable
 import scala.collection.mutable.Map
 import scala.collection.mutable.Set
 import scala.collection.immutable.{Map => IMap, Set => ISet}
 
 object Simulation {
   var instance: Simulation = _
+  val normalStrategy = "NORMAL_STRATEGY"
+  val timePenaltyStrategy = "TIME_PENALTY_STRATEGY"
+  val warehousePenaltyStrategy = "WAREHOUSE_PENALTY_STRATEGY"
 }
 
 class Simulation {
+  val strategy = FileInput.dataSet match {
+      case FileInput.busyDayDataSet => Simulation.normalStrategy
+      case FileInput.motherOfAllWarehousesDataSet => Simulation.warehousePenaltyStrategy
+      case FileInput.redundancyDataSet => Simulation.timePenaltyStrategy
+      case _ => Simulation.normalStrategy
+    }
+
   var rows: Int = _
   var cols: Int = _
   var currentTime: Int = _
@@ -43,9 +52,7 @@ class Simulation {
 
   def doTurn(): Unit = {
     for (drone <- drones) drone.updateState()
-    for (drone <- drones; if !drone.isBusy) {
-      sendDrone(drone)
-    }
+    for (drone <- drones; if !drone.isBusy) sendDrone(drone)
 
     currentTime += 1
     if (currentTime % 1000 == 0) println("current time: " + currentTime)
@@ -56,10 +63,9 @@ class Simulation {
     getOptimalShipmentList(drone) match {
       case None => {
         println("all orders complete")
-        return
       }
       case Some(shipmentList) => {
-        val analysis = analyseShipmentList(shipmentList)
+        val analysis = getShipmentListAnalysis(shipmentList)
 
         var loadCommands = List[Command]()
         var deliverCommands = List[Command]()
@@ -89,7 +95,7 @@ class Simulation {
   }
 
   def getOptimalShipmentList(drone: Drone): Option[List[Shipment]] = {
-    val branchingFactor = 3
+    val branchingFactor = 5
 
     val initialList = getInitialShipmentsListForDrone(drone)
     if (initialList.isEmpty) return None
@@ -114,7 +120,7 @@ class Simulation {
 
     val optimalShipmentList =
       possibilities
-      .map(shipmentList => (shipmentList, analyseShipmentList(shipmentList.reverse)))
+      .map(shipmentList => (shipmentList, getShipmentListAnalysis(shipmentList.reverse)))
       .sortWith((a, b) => a._2._1 > b._2._1)
       .head._1
     println("considered " + possibilities.length + " possible shipment lists")
@@ -170,29 +176,30 @@ class Simulation {
   }
 
   def getScoreForLastShipment(shipmentList: List[Shipment]): Double = {
-    val shipment = shipmentList.head
+    val lastShipment = shipmentList.head
     val previousShipment = shipmentList.tail.head
 
-    val d = previousShipment.order.distanceFrom(shipment.order.position)
+    val d = previousShipment.order.distanceFrom(lastShipment.order.position)
 
-    val m = shipment.numberOfProductTypes
+    val m = lastShipment.numberOfProductTypes
 
     val currentProductTypes = getProductTypes(shipmentList.tail)
     val newProductTypes = Set[Int]()
-    for ((productType, quantity) <- shipment.products) if (!currentProductTypes.contains(productType)) newProductTypes + productType
+    for ((productType, quantity) <- lastShipment.products) if (!currentProductTypes.contains(productType)) newProductTypes + productType
     val n = newProductTypes.size
 
-    val p = shipment.percentageOfOrder
+    val p = lastShipment.percentageOfOrder
     val turns = d + m + n
     p / turns
   }
 
   // returns (scaled score, actual score, total time, number of completed orders)
-  def analyseShipmentList(shipmentList: List[Shipment]): (Double, Double, Int, Int) = {
+  def getShipmentListAnalysis(shipmentList: List[Shipment]): (Double, Double, Int, Int) = {
     val drone = shipmentList.head.drone
     val w = shipmentList.head.warehouse // assume warehouse is fixed for shipment list
     val d1 = drone.distanceFrom(w.position)
-    val totalLoadTime = d1 + numberOfProductTypes(shipmentList)
+    val productTypes = numberOfProductTypes(shipmentList)
+    val totalLoadTime = d1 + productTypes
     var totalTime = totalLoadTime
     var completedOrders = 0
 
@@ -227,7 +234,19 @@ class Simulation {
       previousShipment = shipment
     }
 
-    totalScaledScore /= totalTime
+    strategy match {
+      case Simulation.warehousePenaltyStrategy => {
+        val warehousePenaltyFactor = 0.8
+        val totalScaledTime = totalTime + (previousShipment.averageDistanceToWarehouse * warehousePenaltyFactor)
+        totalScaledScore /= totalScaledTime
+      }
+      case Simulation.timePenaltyStrategy => {
+        val timePenaltyFactor = 0.5
+        val totalScaledTime = math.pow(totalTime.toDouble, 1+timePenaltyFactor)
+        totalScaledScore /= totalScaledTime
+      }
+      case _ => totalScaledScore /= totalTime
+    }
 
     (totalScaledScore, totalActualScore, totalTime, completedOrders)
   }
@@ -249,7 +268,7 @@ class Simulation {
   def numberOfProductTypes(shipmentList: List[Shipment]) = {
     val productTypes = Set[Int]()
     for (shipment <- shipmentList) {
-      for ((productType, quantity) <- shipment.products) productTypes + productType
+      for ((productType, quantity) <- shipment.products) productTypes += productType
     }
     productTypes.size
   }
@@ -278,6 +297,8 @@ class Simulation {
   }
 
   def printDescriptionOfSimulationParameters(): Unit = {
+    println("Dataset: " + FileInput.dataSet)
+    println("Test number: " + FileInput.test)
     println("Simulation Parameters: ")
     println("Rows: " + rows)
     println("Cols: " + cols)

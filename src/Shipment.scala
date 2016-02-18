@@ -26,6 +26,16 @@ case class Shipment(drone: Drone, order: Order, warehouse: Warehouse, products: 
     (loadCommands, deliverCommands)
   }
 
+  def averageDistanceToWarehouse = {
+    val numberOfWarehousesToAverage = 3
+    val closest = Simulation.instance.warehouses
+      .map(_.distanceFrom(order.position))
+      .sortWith(_ < _)
+      .take(numberOfWarehousesToAverage)
+    val sum = closest.foldLeft(0)(_ + _)
+    sum.toDouble / closest.length
+  }
+
   def analyseAsInitialShipment(): (Double, Double, Int) = {
     val d1 = drone.distanceFrom(warehouse.position)
     val d2 = warehouse.distanceFrom(order.position)

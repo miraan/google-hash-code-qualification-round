@@ -4,16 +4,21 @@ import scala.io.Source
 import scala.collection.mutable.Map
 
 object FileInput {
-  val dataset = "busy_day"
+  val busyDayDataSet = "busy_day"
+  val motherOfAllWarehousesDataSet = "mother_of_all_warehouses"
+  val redundancyDataSet = "redundancy"
+
+  val dataSet = busyDayDataSet
+  val test = 11
 
   def getFileLines(): Array[String] = {
-    val filename = "/Users/tripr/Documents/Oxford/Google Hash Code Online Qualification Round/src/"+dataset+".in"
+    val filename = "/Users/tripr/Documents/Oxford/Google Hash Code Online Qualification Round/src/"+dataSet+".in"
     val fileContents = Source.fromFile(filename).getLines()
     fileContents.toArray
   }
 
   def writeOutput(contents: String): Unit = {
-    val filename = "/Users/tripr/Documents/Oxford/Google Hash Code Online Qualification Round/src/"+dataset+".out"
+    val filename = "/Users/tripr/Documents/Oxford/Google Hash Code Online Qualification Round/src/"+dataSet+"_"+test+".out"
     new PrintWriter(filename) { write(contents); close }
   }
 
@@ -64,7 +69,7 @@ object FileInput {
 
     simulation.numberOfDrones = numberOfDrones
     var drones: List[Drone] = List()
-    val warehouse0Position = simulation.warehouses(0).position
+    val warehouse0Position = simulation.warehouses.last.position
     for (i <- 0 until numberOfDrones) {
       val drone = Drone(i, warehouse0Position, Map[Int, Int]())
       drones ::= drone
